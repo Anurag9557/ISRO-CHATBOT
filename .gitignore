@@ -1,0 +1,50 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Aditya-L1 RAG — .gitignore
+# Repo tracks CODE ONLY. Confidential mission data and every artifact derived
+# from it stay OUT of version control. Keep this file in place BEFORE `git add`.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── Confidential source documents — NEVER commit ─────────────────────────────
+*.pdf
+*.doc
+*.docx
+Tch_*.txt
+
+# ── Anything derived from the documents (holds their extracted content) ──────
+extracted/
+vectorstore/
+
+# ── Generated reports & build artifacts (regenerate locally) ─────────────────
+*.html
+*.png
+eval_results.json
+eval_report.html
+
+# ── Logs (may contain user queries) ──────────────────────────────────────────
+*.log
+assistant_audit.log
+
+# ── Scratch / duplicate scripts (delete these; not part of the pipeline) ─────
+test.py
+query.py
+
+# ── Python ───────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.env
+
+# ── OS / editor cruft ────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# ─────────────────────────────────────────────────────────────────────────────
+# What DOES get committed:
+#   step1_extraction.py  step2_image_captioning.py  step3_build_vectorstore.py
+#   step4_query.py  evaluate.py  app.py  requirements.txt  README.md  .gitignore
+# ─────────────────────────────────────────────────────────────────────────────

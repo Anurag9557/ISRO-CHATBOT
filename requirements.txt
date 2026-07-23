@@ -1,0 +1,29 @@
+# ── Aditya-L1 RAG — Python dependencies ──────────────────────────────────────
+# Install:  pip install -r requirements.txt
+# For an exact, reproducible pin after install:  pip freeze > requirements.lock.txt
+#
+# NOTE: three NON-Python tools are also required (see README → Setup):
+#   • Ollama            — local model runtime   (https://ollama.com)
+#   • LibreOffice       — converts the .doc Guidelines to .docx  (step1)
+#   • ImageMagick       — converts WMF/EMF vector figures to PNG  (step1)
+# And two Ollama models:
+#   ollama pull qwen2.5vl            # vision, for image captioning (step2)
+#   ollama pull qwen2.5:7b-instruct  # text, for answer generation (step4)
+
+# ── Document extraction (step1) ──────────────────────────────────────────────
+pymupdf            # PDF text + image extraction (imported as `fitz`)
+python-docx        # .docx parsing
+
+# ── Image captioning (step2) ─────────────────────────────────────────────────
+pillow             # image validation / normalisation
+ollama             # local model client (vision captioning + text generation)
+
+# ── Vector store + hybrid retrieval (step3, step4, evaluate) ─────────────────
+sentence-transformers   # BGE-M3 embeddings (1024-dim)
+torch                   # backend for sentence-transformers (CPU, or CUDA build for GPU)
+chromadb                # local persistent vector database
+rank_bm25               # BM25 keyword index for hybrid search
+
+# ── Web UI (app.py) ──────────────────────────────────────────────────────────
+streamlit          # web front-end:  streamlit run app.py
+pandas             # interactive command-log table
