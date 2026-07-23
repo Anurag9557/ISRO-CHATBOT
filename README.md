@@ -1,4 +1,4 @@
-# Aditya-L1 Mission Document Assistant
+# ISRO-CHATBOT
 
 This is a question-answering tool I built over the operations documents of ISRO's
 Aditya-L1 mission. You ask it something in ordinary English and it answers from the
