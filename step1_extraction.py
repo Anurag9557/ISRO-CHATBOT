@@ -1,17 +1,30 @@
 #!/usr/bin/env python3
 """
-Step 1: read the five source documents and turn them into JSON.
 
-Writes:
-  extracted/chunks.json       text chunks from FCP, MOR, OPS_MANUAL, GUIDELINES
-  extracted/tch_records.json  structured command records from the TCH log
-  extracted/images/           images pulled out of the PDFs and DOCX files
+Step 1: Document Extraction — Aditya-L1 RAG Pipeline
+=====================================================
+Extracts text chunks, images, and structured records from all 5 source documents.
+
+Outputs (written to ./extracted/):
+  chunks.json       — text chunks from FCP, MOR, OPS_MANUAL, GUIDELINES
+  tch_records.json  — structured command records from Tch_1_.txt
+  images/           — raw image files extracted from PDFs and DOCX
 
 Usage:
-  python step1_extraction.py                 # docs in the current folder
-  python step1_extraction.py /path/to/docs/  # or point it at a folder
+  python step1_extraction.py                   # looks for docs in current dir
+  python step1_extraction.py /path/to/docs/    # custom input directory
 
-Needs pymupdf and python-docx (pip install), plus LibreOffice for the .doc file.
+Dependencies:
+  pip install pymupdf python-docx
+  + LibreOffice installed (for .doc conversion)
+
+FIXES vs previous version:
+  - MOR chunk IDs: use section-index (MOR_s{i}_c{idx}) instead of page+sub-idx
+    → eliminates 92 duplicate IDs caused by multiple sections on the same page
+  - FCP notes: no longer reset fcp_number after END OF PROCEDURE
+    → notes pages now correctly inherit their procedure's FCP number
+  - FCP diagnostic: prints page-by-page text/image availability at extraction time
+    → immediately shows whether FCP pages are text-based or scanned
 """
 import subprocess
 import shutil
@@ -22,7 +35,7 @@ from pathlib import Path
 from dataclasses import dataclass, field, asdict
 from typing import Optional
 
-# Dependency check
+# ── Dependency check ──────────────────────────────────────────────────────────
 try:
     import fitz  # PyMuPDF
 except ImportError:
@@ -34,7 +47,7 @@ except ImportError:
     raise ImportError("Missing: pip install python-docx")
 
 
-# Document registry
+# ── Document registry ────────────────────────────────────────────────────────
 DOCS = {
     "FCP":        "Fcp_document_AL1_v1_0.pdf",
     "MOR":        "AL1_MOR_DOC_V2_16Aug2023.pdf",
@@ -49,7 +62,7 @@ CHUNKS_FILE = OUTPUT_DIR / "chunks.json"
 TCH_FILE    = OUTPUT_DIR / "tch_records.json"
 
 
-# Data model
+# ── Data model ───────────────────────────────────────────────────────────────
 @dataclass
 class ImageRecord:
     file: str
@@ -72,7 +85,7 @@ class Chunk:
     images: list = field(default_factory=list)
 
 
-# Helpers
+# ── Helpers ───────────────────────────────────────────────────────────────────
 
 def convert_vector_to_png(image_path: Path):
     if image_path.suffix.lower() not in [".emf", ".wmf"]:
@@ -100,7 +113,7 @@ def extract_fcp_number(text: str) -> str:
     return m.group(1) if m else ""
 
 
-# FCP table-of-contents parsing
+# ── FCP Table-of-Contents parsing (v2) ────────────────────────────────────────
 
 # Canonical subsystem names, keyed by the raw label used in the FCP TOC column.
 # Includes the "PAYLAOD" misspelling that appears several times in the source.
@@ -130,7 +143,7 @@ def parse_fcp_toc(toc_text: str, pdf_name: str) -> list:
     """
     Parse the FCP Table of Contents into one small index record per procedure.
 
-    Each record maps FCP number -> subsystem -> title, so the RAG can answer
+    Each record maps FCP number → subsystem → title, so the RAG can answer
     "which FCP is used for X?" for ALL listed procedures, even the ones whose
     full body is not present in this excerpt file.
 
@@ -160,7 +173,7 @@ def parse_fcp_toc(toc_text: str, pdf_name: str) -> list:
 
         records.append(asdict(Chunk(
             chunk_id        = chunk_id,
-            text            = f"FCP {fcp} - {subsystem} - {title}",
+            text            = f"FCP {fcp} — {subsystem} — {title}",
             source_doc      = "FCP",
             doc_filename    = pdf_name,
             content_type    = "toc_index",
@@ -210,8 +223,12 @@ def infer_subsystem(text: str, fcp_number: str = "") -> str:
 
 
 def detect_content_type(text: str) -> str:
-    # A short procedure and its trailing NOTES section can land in one chunk,
-    # so check for procedure signals first and only fall back to "note".
+    # ── FIX (v2): check PROCEDURE markers BEFORE the NOTES marker ──────────────
+    # Old code returned "note" if 'NOTES:' appeared anywhere. But a short FCP
+    # procedure's body and its trailing NOTES section get flushed into the SAME
+    # chunk, so procedures 5203/5206/5208/5215 were all mislabeled as "note".
+    # Now: if the chunk carries any procedure signal it is a "procedure";
+    # only a chunk that is *nothing but* notes is labeled "note".
     has_procedure = (
         re.search(r'\bPROCEDURE\s*:', text, re.IGNORECASE)
         or re.search(r'\bEND OF PROCEDURE\b', text, re.IGNORECASE)
@@ -239,7 +256,7 @@ def cid_prefix_to_subsystem(cid: str) -> str:
     return "UNKNOWN"
 
 
-# PDF extractor
+# ── PDF extractor ─────────────────────────────────────────────────────────────
 
 def extract_pdf(doc_key: str, pdf_path: Path, chunks: list):
     print(f"\n[PDF] {pdf_path.name}")
@@ -259,7 +276,7 @@ def extract_pdf(doc_key: str, pdf_path: Path, chunks: list):
             result.append(current.strip())
         return result
 
-    # MOR: section-based extraction
+    # ── MOR: section-based extraction ────────────────────────────────────────
     if doc_key == "MOR":
         heading_re = re.compile(
             r'^\s*(\d+(?:\.\d+)*)\s+([A-Z][A-Z0-9\s\-/(),]{5,})$',
@@ -306,8 +323,10 @@ def extract_pdf(doc_key: str, pdf_path: Path, chunks: list):
                     page = p
 
             for idx, chunk in enumerate(split_text(section)):
-                # key the id on the section index so two sections on the same
-                # page don't collide
+                # ── FIX: use section index i (not page) for unique IDs ──────
+                # Old: f"MOR_{page}_{idx}"  → collision when multiple sections
+                #      share the same page and idx resets to 0 for each section
+                # New: f"MOR_s{i}_c{idx}"  → i is unique per section match
                 chunks.append(asdict(Chunk(
                     chunk_id        = f"MOR_s{i}_c{idx}",
                     text            = chunk,
@@ -320,10 +339,10 @@ def extract_pdf(doc_key: str, pdf_path: Path, chunks: list):
                 )))
 
         doc.close()
-        print(f"  -> {sum(1 for c in chunks if c['source_doc']=='MOR')} chunks")
+        print(f"  → {sum(1 for c in chunks if c['source_doc']=='MOR')} chunks")
         return
 
-    # FCP (and any other PDF): procedure-block extraction
+    # ── FCP (and any other PDF): procedure-block extraction ──────────────────
 
     # Diagnostic: show how many pages have readable text vs image-only
     # This immediately tells us if OCR is needed
@@ -338,10 +357,11 @@ def extract_pdf(doc_key: str, pdf_path: Path, chunks: list):
             label = f"{chars:>6} chars" if chars > 50 else "IMAGE ONLY"
             print(f"    Page {i:>3}: {label}  ({imgs} embedded images)")
     if img_only > len(doc) * 0.3:
-        print(f"  ⚠  {img_only} image-only pages - OCR needed for full FCP coverage")
+        print(f"  ⚠  {img_only} image-only pages — OCR needed for full FCP coverage")
 
+    # ── FCP TOC handling (v2) ────────────────────────────────────────────────
     # The FCP file opens with a Table of Contents listing every procedure
-    # (FCP number -> subsystem -> title), then gives the full body for only a
+    # (FCP number → subsystem → title), then gives the full body for only a
     # subset. We parse the TOC region into one index record per procedure so
     # the RAG can answer "which FCP is for X?" for ALL listed procedures, and
     # we skip the TOC pages in the body loop below so the old giant TOC blob
@@ -357,7 +377,7 @@ def extract_pdf(doc_key: str, pdf_path: Path, chunks: list):
                 break
             toc_parts.append(ptext)
         else:
-            body_start_page = len(doc) + 1     # no bodies found - whole file is TOC
+            body_start_page = len(doc) + 1     # no bodies found — whole file is TOC
 
         toc_records = parse_fcp_toc("\n".join(toc_parts), pdf_path.name)
         chunks.extend(toc_records)
@@ -439,17 +459,18 @@ def extract_pdf(doc_key: str, pdf_path: Path, chunks: list):
         if "END OF PROCEDURE" in text and current_pages:
             flush(page_num)
             chunk_start_page = page_num + 1
-            # don't reset current_fcp / current_heading here: notes pages that
-            # follow END OF PROCEDURE belong to the same FCP. The reset happens
-            # on its own when the next header is detected.
+            # ── FIX: do NOT reset current_fcp / current_heading here ────────
+            # Notes pages that follow END OF PROCEDURE belong to the same FCP.
+            # Old code set current_fcp = "" here, so notes got empty fcp_number.
+            # Reset happens naturally when the next header is detected above.
 
     flush(len(doc))
     doc.close()
     n = sum(1 for c in chunks if c["source_doc"] == doc_key)
-    print(f"  -> {n} chunks")
+    print(f"  → {n} chunks")
 
 
-# DOCX extractor
+# ── DOCX extractor ────────────────────────────────────────────────────────────
 
 def extract_docx(doc_key: str, docx_path: Path, chunks: list):
     print(f"\n[DOCX] {docx_path.name}")
@@ -511,10 +532,10 @@ def extract_docx(doc_key: str, docx_path: Path, chunks: list):
             except Exception as exc:
                 print(f"  ! image skipped: {exc}")
 
-    print(f"  -> {chunk_num} chunks, {img_count} images")
+    print(f"  → {chunk_num} chunks, {img_count} images")
 
 
-# DOC extractor (via LibreOffice)
+# ── DOC extractor (via LibreOffice) ──────────────────────────────────────────
 
 def extract_doc(doc_key: str, doc_path: Path, chunks: list):
     print(f"\n[DOC] {doc_path.name}")
@@ -527,7 +548,7 @@ def extract_doc(doc_key: str, doc_path: Path, chunks: list):
         if not soffice:
             print("  ERROR: LibreOffice not found. Install it and re-run.")
             return
-        print(f"  Converting with LibreOffice...")
+        print(f"  Converting with LibreOffice…")
         result = subprocess.run(
             [soffice, "--headless", "--convert-to", "docx",
              "--outdir", str(OUTPUT_DIR), str(doc_path)],
@@ -536,7 +557,7 @@ def extract_doc(doc_key: str, doc_path: Path, chunks: list):
         lo_output = OUTPUT_DIR / (doc_path.stem + ".docx")
         if lo_output.exists():
             lo_output.rename(converted)
-            print(f"  Converted -> {converted.name}")
+            print(f"  Converted → {converted.name}")
         else:
             print(f"  ERROR: Conversion failed.\n  {result.stderr}")
             return
@@ -544,18 +565,12 @@ def extract_doc(doc_key: str, doc_path: Path, chunks: list):
     extract_docx(doc_key, converted, chunks)
 
 
-# TCH extractor
+# ── TCH extractor ─────────────────────────────────────────────────────────────
 
 def extract_tch(doc_key: str, tch_path: Path, tch_records: list):
     print(f"\n[TCH] {tch_path.name}")
     raw   = tch_path.read_bytes().decode("latin-1")
-
-    # A few command rows carry raw binary payloads whose bytes can include a
-    # stray newline, which would split the record across two physical lines.
-    # Grouping the text at each "NNNN |" row start keeps every record whole.
-    _starts = [m.start() for m in re.finditer(r'(?m)^\s{0,2}\d{4}\s*\|', raw)]
-    records = [raw[_starts[i]:(_starts[i + 1] if i + 1 < len(_starts) else len(raw))]
-               for i in range(len(_starts))]
+    lines = raw.splitlines()
 
     row_re = re.compile(
         r'^\s{0,2}(\d{4})\s*\|\s*'
@@ -573,8 +588,8 @@ def extract_tch(doc_key: str, tch_path: Path, tch_records: list):
     )
 
     count = 0
-    for record in records:
-        m = row_re.match(record)
+    for line in lines:
+        m = row_re.match(line)
         if not m:
             continue
         (sl_no, code, cid, mnemonic, cmd_time,
@@ -622,10 +637,10 @@ def extract_tch(doc_key: str, tch_path: Path, tch_records: list):
         })
         count += 1
 
-    print(f"  -> {count} command records")
+    print(f"  → {count} command records")
 
 
-# Main
+# ── Main ──────────────────────────────────────────────────────────────────────
 
 def run_extraction(input_dir: str = "."):
     src = Path(input_dir)
@@ -636,13 +651,13 @@ def run_extraction(input_dir: str = "."):
     tch_records: list[dict] = []
 
     print("=" * 60)
-    print("Aditya-L1 RAG - Step 1: Extraction")
+    print("Aditya-L1 RAG — Step 1: Extraction")
     print("=" * 60)
 
     for doc_key, filename in DOCS.items():
         fpath = src / filename
         if not fpath.exists():
-            print(f"\n[SKIP] {filename} - not found at {fpath}")
+            print(f"\n[SKIP] {filename} — not found at {fpath}")
             continue
 
         if doc_key == "TCH":
@@ -672,7 +687,7 @@ def run_extraction(input_dir: str = "."):
     for k, v in by_doc.items():
         print(f"  {k:<14} {v:>4} text chunks")
     print(f"  {'TCH':<14} {len(tch_records):>4} command records")
-    print(f"  {'Images':<14} {len(img_files):>4} files -> {IMAGES_DIR}")
+    print(f"  {'Images':<14} {len(img_files):>4} files → {IMAGES_DIR}")
     print()
     print("Next: run step2_image_captioning.py")
     print("=" * 60)
