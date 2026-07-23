@@ -158,16 +158,6 @@ are full of exact identifiers like `OBCS2370` and `FCP-5201`. Pure semantic sear
 blurs those, while keyword search nails them, so using both covers each other's
 blind spots. The two rankings get combined with Reciprocal Rank Fusion.
 
-## Known limitations
-
-- The FCP file I have contains the full body for only 6 procedures; the rest show
-  up as index entries. That's a limitation of the source file, not the pipeline.
-- The telecommand history I was given covers a single day (2026-06-09).
-- A 7B local model can be a bit terse. Retrieval is the strong part; generation is
-  the weaker link, and the hybrid search plus citations make up for it.
-- For figures inside the Word/DOC files, the caption is written mostly from what's
-  visible in the image, without the surrounding paragraph text (the PDF figures do
-  get that context). Adding it is on my list.
 
 ## What's in the repo
 
