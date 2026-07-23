@@ -1,11 +1,5 @@
 #!/usr/bin/env python3
 """
-Streamlit web interface for the Aditya-L1 document assistant.
-
-It imports the retrieval and generation code from step4_query, loads the models
-once (so they stay warm across queries, unlike the CLI), and shows a chat with
-citations, an interactive command-log table, and inline diagrams.
-
 Run:
     pip install streamlit pandas
     streamlit run app.py
@@ -25,7 +19,7 @@ import streamlit as st
 import step4_query as q
 
 # Config
-APP_TITLE   = "Aditya-L1 Mission-Document Assistant"
+APP_TITLE   = "ISRO Assistant"
 SUBSYSTEMS  = ["Auto", "OBC", "AOCS", "PAYLOAD", "POWER", "DTG", "MECHANISM",
                "PROPULSION", "TTC_XBAND", "WHEEL", "SENSOR", "ODHS"]
 EXAMPLES    = [
@@ -36,10 +30,6 @@ EXAMPLES    = [
     "What are the safety logics?",
     "What are the Aditya-L1 orbit constraints?",
 ]
-DISCLAIMER  = ("⚠️ Advisory tool - answers are generated from mission documents "
-               "and must be verified against the source before any operational use. "
-               "This system never commands the spacecraft.")
-
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s  %(levelname)s  %(message)s",
@@ -199,7 +189,7 @@ with st.sidebar:
 
 # Main pane
 st.title(APP_TITLE)
-st.caption(DISCLAIMER)
+
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
